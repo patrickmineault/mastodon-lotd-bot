@@ -32,10 +32,12 @@ def resolve_doi(url):
     if 'doi.org' in url:
         response = requests.get(url, headers={'Accept': 'application/json'})
         if response.status_code == 200:
-            links = response.json()['link']
-            for link in links:
-                if link['content-type'] == 'text/html':
-                    return link['URL']
+            r = response.json()
+            if 'link' in r:
+                links = r['link']
+                for link in links:
+                    if link['content-type'] == 'text/html':
+                        return link['URL']
     
     return url
 
@@ -290,7 +292,7 @@ body: {truncate_paragraph(contents['body'])}
             r = json.loads(content)
             return r
         except json.decoder.JSONDecodeError:
-            logger.warn(f"Failed to parse JSON with model {model}")
+            logger.warning(f"Failed to parse JSON with model {model}")
             continue
 
 
@@ -359,8 +361,10 @@ def main():
             }
         )
 
+    date_str = time.strftime("%Y-%m-%d", time.localtime())
+
     # Dump to disk
-    with open("cache/lotd.json", "w") as f:
+    with open(f"cache/lotd-{date_str}.json", "w") as f:
         json.dump(lotd, f, cls=DateTimeEncoder)
 
 
