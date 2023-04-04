@@ -162,8 +162,10 @@ def get_url_via_selenium(url):
 
 
 def fetch_webpage_data(url):
+    fetched_via_selenium = False
     if "psyarxiv" in url or "linkinghub" in url:
         # Dreaded javacript nonsense from psyarxiv and elsevier
+        fetched_via_selenium = True
         html_content = get_url_via_selenium(url)
     else:
         # A mercifully non-javascript webpage.
@@ -339,18 +341,44 @@ def main():
 
     popular_links = sorted(popularity.items(), key=lambda x: x[1], reverse=True)
 
+    # Stem the links
+    banned_links = set()
+    for i, (popular_link, _) in enumerate(popular_links):
+        leaf = popular_link.split('://')[-1]
+        for j, (popular_link2, _) in enumerate(popular_links):
+            if i != j and leaf in popular_link2:
+                # Keep the most precise link
+                banned_links.add(popular_link)
+
+    popular_links = [(x, y) for x, y in popular_links if x not in banned_links]
+
     logger.info("Most popular links:")
     logger.info(popular_links[:10])
 
     # Now fetch the content for each of these popular links and summarize
     lotd = []
+    titles = set()
     logger.info("Summarizing webpages...")
     for link, _ in tqdm.tqdm(popular_links[:10]):
         if popularity[link] < 1:
             continue
 
         webpage_data = fetch_webpage_data(link)
+        if webpage_data['body'].strip() == '':
+            logger.warning("Skipping page which could not be fetched")
+            continue
+
         summary = summarize_webpage(webpage_data)
+
+        if summary['title'] in titles:
+            logger.warning("Skipping page with duplicate title")
+            continue
+
+        if 'pdf' in summary['body'].lower():
+            # Link to a PDF, abort.
+            continue
+
+        titles.add(summary['title'])
 
         lotd.append(
             {
