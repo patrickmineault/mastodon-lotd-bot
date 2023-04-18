@@ -8,6 +8,7 @@ import requests
 import settings
 import time
 import tqdm
+import urllib3
 
 from mastodon import Mastodon
 from bs4 import BeautifulSoup, Comment, NavigableString
@@ -27,24 +28,24 @@ openai.api_key_path = settings.open_ai_api_key_path
 
 
 def resolve_doi(url):
-    """Resolve DOI to URL, otherwise two people can link to the same resource 
+    """Resolve DOI to URL, otherwise two people can link to the same resource
     and it would count them as separate."""
-    if 'doi.org' in url:
-        response = requests.get(url, headers={'Accept': 'application/json'})
+    if "doi.org" in url:
+        response = requests.get(url, headers={"Accept": "application/json"})
         if response.status_code == 200:
             r = response.json()
-            if 'link' in r:
-                links = r['link']
+            if "link" in r:
+                links = r["link"]
                 for link in links:
-                    if link['content-type'] == 'text/html':
-                        return link['URL']
-    
+                    if link["content-type"] == "text/html":
+                        return link["URL"]
+
     return url
 
 
 def truncate_paragraph(paragraph, max_words=1000):
     # Split the paragraph into words using a regular expression, including <> tags
-    words = re.findall(r'\b\w+\b|[<>]', paragraph)
+    words = re.findall(r"\b\w+\b|[<>]", paragraph)
 
     words = [x.strip() for x in words if x.strip()]
 
@@ -58,10 +59,11 @@ def truncate_paragraph(paragraph, max_words=1000):
         total_len += len(words) - 1
 
         if total_len < len(paragraph):
-            idx = paragraph[total_len:].find(' ')
-         
-            return paragraph[:(total_len + idx)] + '...'
+            idx = paragraph[total_len:].find(" ")
+
+            return paragraph[: (total_len + idx)] + "..."
     return paragraph
+
 
 def fetch_toots_from_last_day(mastodon):
     # Initialize variables for pagination
@@ -169,7 +171,10 @@ def fetch_webpage_data(url):
         html_content = get_url_via_selenium(url)
     else:
         # A mercifully non-javascript webpage.
-        response = requests.get(url)
+        try:
+            response = requests.get(url)
+        except requests.exceptions.SSLError:
+            return None
         html_content = response.text
 
     parsed_content = extract_content(html_content)
@@ -270,7 +275,7 @@ url: {contents['url']}
 title: {contents['title']}
 body: {truncate_paragraph(contents['body'])}
 """
-    for model in ['gpt-3.5-turbo', 'gpt-4']:
+    for model in ["gpt-3.5-turbo", "gpt-4"]:
         # GPT-4 is slower but it almost always returns good results.
         for delay in [1, 2, 4, 8, 16, 32, 64, 128]:
             logger.info(f"Trying model {model}")
@@ -278,7 +283,10 @@ body: {truncate_paragraph(contents['body'])}
                 response = openai.ChatCompletion.create(
                     model=model,
                     messages=[
-                        {"role": "system", "content": "You are a helpful assistant. You always follow instructions."},
+                        {
+                            "role": "system",
+                            "content": "You are a helpful assistant. You always follow instructions.",
+                        },
                         {"role": "user", "content": prompt},
                     ],
                 )
@@ -286,7 +294,7 @@ body: {truncate_paragraph(contents['body'])}
                 break
             except (openai.error.APIError, openai.error.RateLimitError):
                 logger.warn(f"Failed to get response from model {model}")
-                
+
             logger.warn(f"Timed out waiting for {model}, retrying in {delay} seconds.")
             time.sleep(delay)
 
@@ -309,8 +317,12 @@ def main():
 
     # Time window: last 24 hours
     toots = fetch_toots_from_last_day(mastodon)
-    toots = [toot for toot in toots if (
-        toot['visibility'] == "public") and ('#nobot' not in toot['account']['note'])]
+    toots = [
+        toot
+        for toot in toots
+        if (toot["visibility"] == "public")
+        and ("#nobot" not in toot["account"]["note"])
+    ]
     logger.info(f"Analyzing {len(toots)} toots...")
 
     with open("cache/toots.json", "w") as f:
@@ -322,7 +334,13 @@ def main():
     backlinks = collections.defaultdict(list)
     for toot in toots:
         # Find links in toot content
-        links = set([resolve_doi(x) for x in extract_links(toot.content) if not x.endswith(".pdf")])
+        links = set(
+            [
+                resolve_doi(x)
+                for x in extract_links(toot.content)
+                if not x.endswith(".pdf")
+            ]
+        )
 
         # Start with arxiv links
         links = sorted(links, key=lambda x: "rxiv" not in x)
@@ -344,7 +362,7 @@ def main():
     # Stem the links
     banned_links = set()
     for i, (popular_link, _) in enumerate(popular_links):
-        leaf = popular_link.split('://')[-1]
+        leaf = popular_link.split("://")[-1]
         for j, (popular_link2, _) in enumerate(popular_links):
             if i != j and leaf in popular_link2:
                 # Keep the most precise link
@@ -364,21 +382,30 @@ def main():
             continue
 
         webpage_data = fetch_webpage_data(link)
-        if webpage_data['body'].strip() == '':
+        if webpage_data is None:
+            continue
+
+        if webpage_data["body"].strip() == "":
             logger.warning("Skipping page which could not be fetched")
             continue
 
         summary = summarize_webpage(webpage_data)
 
-        if summary['title'] in titles:
+        if summary["title"] in titles:
             logger.warning("Skipping page with duplicate title")
             continue
 
-        if 'pdf' in summary['body'].lower():
+        if (
+            ("pdf" in summary["summary"].lower())
+            or ("pdf" in summary["title"].lower())
+            or ("not available" in summary["summary"].lower())
+            or ("extracted" in summary["summary"].lower()) 
+            or ("access denied" in summary["title"].lower())
+        ):
             # Link to a PDF, abort.
             continue
 
-        titles.add(summary['title'])
+        titles.add(summary["title"])
 
         lotd.append(
             {

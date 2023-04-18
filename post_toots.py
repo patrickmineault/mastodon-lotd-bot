@@ -33,6 +33,7 @@ def get_formatted_toots(lotd):
 <p>Linked by {accounts} ({link['popularity']}⭐)</p>
 <p>{link['summary']}</p>
 <p>{tags}</p>
+<p>Original link: <a href='{link['backlinks'][0]["uri"]}'>{link['backlinks'][0]["uri"]}</a></p>
 """
 
         toots.append(content)
